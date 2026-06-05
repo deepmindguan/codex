@@ -1,0 +1,4 @@
+interface:
+  display_name: "Brand Wiki Rules"
+  short_description: "Build and maintain dynamic brand LLM Wiki rule workflows."
+  default_prompt: "Use this skill to initialize a brand wiki, ingest sources, infer topics, extract rules, compare brands, and generate common rules without hard-coded brand paths."
