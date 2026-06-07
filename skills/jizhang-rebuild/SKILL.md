@@ -1,6 +1,6 @@
 ---
 name: jizhang-rebuild
-description: Use this skill when restoring, rebuilding, redeploying, migrating, or repairing the personal Jizhang accounting PWA, including its React frontend, Fastify SQLite sync API, Nginx deployment, iPhone PWA behavior, cloud data, Excel export/reporting, categories, record editing, note suggestions, and teal statistics page.
+description: Use this skill when restoring, rebuilding, redeploying, migrating, or repairing the personal Jizhang accounting PWA, including its React frontend, Fastify SQLite sync API, Nginx deployment, iPhone PWA behavior, cloud data, historical CSV imports, Excel export/reporting, categories, record editing, note suggestions, and teal statistics page.
 ---
 
 # Jizhang Rebuild
@@ -22,6 +22,8 @@ Use this for the user's personal accounting app when they ask to recover from br
 - SQLite data: `/var/lib/jizhang-api/jizhang.sqlite`
 - API env file: `/etc/jizhang-api.env`
 - Sync key: do not hardcode; read from `/etc/jizhang-api.env` or generate a new one during rebuild.
+- Current cloud baseline as of 2026-06-07: 4886 records, 41 categories, 5 accounts.
+- Current data range: 2022-02 through 2026-06.
 
 ## Latest Product Baseline
 
@@ -34,8 +36,32 @@ Preserve these features when repairing or rebuilding:
 - Record creation, record list, historical record editing, soft deletion.
 - Note suggestions under the note box, based on category-specific history frequency plus defaults.
 - Teal statistics page with income/expense toggle, week/month/year periods, trend line, total/average, and category ranking bars.
+- Statistics time selector is data-driven: week/month/year options are generated from actual records, so old months like 2022-02 and 2025/2026 imports remain selectable by horizontal scrolling.
+- Statistics page must not horizontally overflow in iPhone Home Screen PWA mode; keep page width within viewport and constrain ranking amount columns.
 - Export Excel and JSON backup/restore from settings.
 - Service worker should use network-first navigation behavior and a bumped cache name when changing frontend assets.
+
+## Imported Historical Data
+
+Historical Shark Accounting CSV exports have already been imported into the cloud database:
+
+- `鲨鱼记账明细(4).csv`: 2022-02-19 through 2022-12-31.
+- `鲨鱼记账明细(3).csv`: 2023-01-01 through 2023-12-31.
+- `鲨鱼记账明细(2).csv`: 2024-01-01 through 2024-12-31.
+- `鲨鱼记账明细(1).csv`: 2025-01-01 through 2025-12-31.
+- `鲨鱼记账明细.csv`: 2026-01-01 through 2026-05-31.
+- Manual screenshot imports covered 2026-06-01 through 2026-06-04.
+
+CSV import rules used so far:
+
+- Source encoding is UTF-16 little-endian and delimiter is tab.
+- Required columns: `日期`, `收支类型`, `类别`, `账户`, `金额`, `备注`.
+- Map `支出` to `expense`, `收入` to `income`.
+- Map source account `未关联` to local account `现金` (`acc-cash`).
+- Match categories by current category name and record type; stop and report if a category is missing.
+- Use stable import IDs so reruns overwrite/skip rather than duplicate.
+- Check exact duplicates against server by date, type, amount, category, and note before import.
+- Back up SQLite before any import.
 
 ## Local Verification
 
@@ -58,7 +84,8 @@ After significant frontend changes, verify a mobile viewport. Key flows:
 
 - Add record: enter amount, choose category, click a note suggestion, save.
 - Records: open an old record, edit amount/category/note, save.
-- Stats: switch expense/income and week/month/year.
+- Stats: switch expense/income and week/month/year; horizontally scroll old months/years; verify 2022-2026 data appears after sync.
+- In iPhone Home Screen PWA mode, verify statistics ranking amounts stay inside the viewport. A good browser check is `document.documentElement.scrollWidth === document.documentElement.clientWidth`.
 - Settings: run sync if credentials are configured.
 
 ## Deploy Existing Server
@@ -208,6 +235,22 @@ ssh root@HOST "systemctl stop jizhang-api && cp -a /var/lib/jizhang-api/jizhang.
 
 To move data to a new server, copy `/var/lib/jizhang-api/jizhang.sqlite*` to the new server while the API is stopped, then start the API and run `/api/health`.
 
+## CSV Import Procedure
+
+When importing another Shark Accounting CSV:
+
+1. Read as UTF-16 text and parse as tab-delimited CSV.
+2. Validate the exact headers: `日期`, `收支类型`, `类别`, `账户`, `金额`, `备注`.
+3. Validate every date (`YYYY年MM月DD日`) and every amount as a decimal.
+4. Fetch `/api/sync` with the sync key and build category/account maps from live server data.
+5. Map every row to a `MoneyRecord`; if any category is missing, stop before writing.
+6. Compute exact duplicate keys against existing server records and report the count.
+7. Back up `/var/lib/jizhang-api/jizhang.sqlite*`.
+8. Import via `/api/sync`. If Nginx returns `413 Request Entity Too Large`, split into batches of about 400 records.
+9. Fetch `/api/sync` again and verify total imported count, date range, month/year totals, category distribution, and `/api/health`.
+
+Never import by editing SQLite directly unless the API is unavailable and the user explicitly approves a recovery-mode path.
+
 ## Safe Repair Rules
 
 - Do not wipe `/var/lib/jizhang-api` unless the user explicitly asks and a backup exists.
@@ -216,3 +259,4 @@ To move data to a new server, copy `/var/lib/jizhang-api/jizhang.sqlite*` to the
 - When changing frontend assets or service worker behavior, bump the cache name in `web/public/sw.js`.
 - Prefer current scripts over hand-deploying: `web/npm run deploy` and `scripts/deploy-api.sh`.
 - After deployment, always run remote health checks and tell the user whether sync/API/frontend are OK.
+- For statistics layout, keep `html`, `body`, `#root`, `.app-shell`, and `.stats-page` protected against horizontal overflow; ranking amount text must not force the row wider than the viewport.
