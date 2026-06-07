@@ -1,0 +1,7 @@
+interface:
+  display_name: "Jizhang Rebuild"
+  short_description: "重建和迁移个人记账 PWA"
+  brand_color: "#0F766E"
+  default_prompt: "Use $jizhang-rebuild to verify, repair, redeploy, or migrate my Jizhang accounting app."
+policy:
+  allow_implicit_invocation: true
