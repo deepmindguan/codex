@@ -22,6 +22,7 @@ Use this for the user's personal accounting app when they ask to recover from br
 - SQLite data: `/var/lib/jizhang-api/jizhang.sqlite`
 - API env file: `/etc/jizhang-api.env`
 - Sync key: do not hardcode; read from `/etc/jizhang-api.env` or generate a new one during rebuild.
+- Sync payload size: Fastify `bodyLimit` should be `50 * 1024 * 1024`; Nginx site should include `client_max_body_size 50m;`.
 - Current cloud baseline as of 2026-06-07: 4886 records, 41 categories, 5 accounts.
 - Current data range: 2022-02 through 2026-06.
 
@@ -34,12 +35,15 @@ Preserve these features when repairing or rebuilding:
 - Server stores records, categories, accounts in SQLite.
 - Expanded categories with icons.
 - Record creation, record list, historical record editing, soft deletion.
+- Add-record page uses a category-first flow: the bottom amount/note/keypad sheet is hidden initially and only slides up after the user taps a category. It includes note suggestions, account/date controls, custom numeric keypad, close button, and `完成`.
 - Note suggestions under the note box, based on category-specific history frequency plus defaults.
 - Teal statistics page with income/expense toggle, week/month/year periods, trend line, total/average, and category ranking bars.
 - Statistics time selector is data-driven: week/month/year options are generated from actual records, so old months like 2022-02 and 2025/2026 imports remain selectable by horizontal scrolling.
 - Statistics page must not horizontally overflow in iPhone Home Screen PWA mode; keep page width within viewport and constrain ranking amount columns.
 - Export Excel and JSON backup/restore from settings.
+- Settings category/account management is low-risk by default: show clean tags only. Deletion is available only after tapping `编辑`, then a small delete control appears per tag, and deletion still requires confirmation. Do not make ordinary tag taps delete anything.
 - Service worker should use network-first navigation behavior and a bumped cache name when changing frontend assets.
+- iPhone Safari and "Add to Home Screen" PWA use separate local storage. If one syncs and the other does not, preserve the data-bearing copy, fix sync, then run `立即同步` in that copy first.
 
 ## Imported Historical Data
 
@@ -87,6 +91,7 @@ After significant frontend changes, verify a mobile viewport. Key flows:
 - Stats: switch expense/income and week/month/year; horizontally scroll old months/years; verify 2022-2026 data appears after sync.
 - In iPhone Home Screen PWA mode, verify statistics ranking amounts stay inside the viewport. A good browser check is `document.documentElement.scrollWidth === document.documentElement.clientWidth`.
 - Settings: run sync if credentials are configured.
+- Settings management: verify plain category/account tags do not delete; tap `编辑`, then delete button appears and confirm dialog gates deletion.
 
 ## Deploy Existing Server
 
@@ -172,6 +177,7 @@ WantedBy=multi-user.target
 server {
     listen 80;
     server_name _;
+    client_max_body_size 50m;
 
     root /var/www/jizhang;
     index index.html;
@@ -234,6 +240,33 @@ ssh root@HOST "systemctl stop jizhang-api && cp -a /var/lib/jizhang-api/jizhang.
 ```
 
 To move data to a new server, copy `/var/lib/jizhang-api/jizhang.sqlite*` to the new server while the API is stopped, then start the API and run `/api/health`.
+
+## Sync Failure Recovery
+
+If iPhone shows `同步失败：413`:
+
+1. Treat this as payload too large, usually because the Home Screen PWA has more local data than Safari.
+2. Do not delete the Home Screen icon or clear Safari/PWA data.
+3. Ensure API has `bodyLimit: 50 * 1024 * 1024` in `api/src/server.js`, deploy API, and restart `jizhang-api`.
+4. Ensure Nginx site has `client_max_body_size 50m;`, then `nginx -t && systemctl reload nginx`.
+5. Verify with a large harmless payload against both `http://127.0.0.1:3001/api/sync` and `http://127.0.0.1/api/sync`; both should return `200`, not `413`.
+6. Ask the user to run `立即同步` first in the data-bearing PWA, then sync Safari afterward to pull the cloud copy.
+
+If categories disappear after accidental taps in Settings:
+
+1. Back up remote SQLite first.
+2. Restore category visibility on the server and make server timestamps newer than the mistaken local archived state:
+
+```bash
+ssh root@118.145.224.120 'cp /var/lib/jizhang-api/jizhang.sqlite /var/lib/jizhang-api/jizhang.before-category-restore.$(date +%Y%m%d%H%M%S).sqlite && node --input-type=module <<"NODE"
+import Database from "better-sqlite3";
+const db = new Database("/var/lib/jizhang-api/jizhang.sqlite");
+db.prepare("UPDATE categories SET archived = 0, deleted_at = NULL, updated_at = ?").run(new Date().toISOString());
+NODE
+systemctl restart jizhang-api'
+```
+
+3. Then have the user run `立即同步` in the affected iPhone PWA so the restored cloud categories overwrite local mistaken archives.
 
 ## CSV Import Procedure
 
